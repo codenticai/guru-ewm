@@ -1,0 +1,10 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+httpx>=0.27
+python-multipart>=0.0.9
+pypdf>=4.0
+Pillow>=10.0
+pytesseract>=0.3.10
+# Uncomment for GPU support:
+# torch>=2.4.0
+# transformers>=4.46.0

@@ -1,0 +1,236 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Guru-EWM — Docker Compose
+# ─────────────────────────────────────────────────────────────────────────────
+# Services:
+#   ipfs               — Content-addressed storage (ipfs/kubo)
+#   hllset-next        — HLLSet Algebra platform (Rust --serve HTTP API :9090)
+#   hllset-cortex      — HLLSet semantic compressor (Flask :9092)
+#   deepseek-ocr       — GPU-accelerated OCR inference (FastAPI :9093, optional GPU)
+#   medical-diagnostic — Clinical diagnosis service (FastAPI :9094)
+#   ewm-gateway        — Central API gateway (FastAPI :8000)
+#   ewm-ui             — Generic UI (NiceGUI :8080)
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # IPFS — Content-Addressed Storage
+  # ═══════════════════════════════════════════════════════════════════════════
+  ipfs:
+    image: ipfs/kubo:latest
+    container_name: ewm-ipfs
+    ports:
+      - "${IPFS_API_PORT:-5001}:5001"
+      - "${IPFS_GATEWAY_PORT:-8081}:8080"
+    environment:
+      - IPFS_PROFILE=${IPFS_PROFILE:-server}
+    volumes:
+      - ipfs_data:/data/ipfs
+    networks:
+      - ewm-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ipfs", "id"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # hllset-next — HLLSet Algebra Platform (Rust HTTP API)
+  # ═══════════════════════════════════════════════════════════════════════════
+  hllset-next:
+    build:
+      context: D:\innovation\hllset-next
+      dockerfile: Dockerfile
+    container_name: ewm-hllset-next
+    ports:
+      - "${HLLSET_NEXT_PORT:-9090}:9090"
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - HLLSET_STORAGE=${HLLSET_STORAGE:-ipfrs}
+      - HLLSET_DATA_DIR=/data
+    volumes:
+      - hllset_data:/data
+    networks:
+      - ewm-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/api/v1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # hllset-cortex — HLLSet Semantic Compressor
+  # ═══════════════════════════════════════════════════════════════════════════
+  hllset-cortex:
+    build:
+      context: D:\innovation\DeepSeek-OCR\hllset_cortex
+      dockerfile: Dockerfile
+    container_name: ewm-hllset-cortex
+    ports:
+      - "${HLLSET_CORTEX_PORT:-9092}:9092"
+    environment:
+      - IPFS_API_URL=http://ipfs:5001
+      - PORT=9092
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      ipfs:
+        condition: service_healthy
+    networks:
+      - ewm-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9092/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # deepseek-ocr — GPU-Accelerated OCR Model Service
+  # ═══════════════════════════════════════════════════════════════════════════
+  deepseek-ocr:
+    build:
+      context: ./deepseek-ocr
+      dockerfile: Dockerfile
+    container_name: ewm-deepseek-ocr
+    ports:
+      - "${DEEPSEEK_OCR_PORT:-9093}:9093"
+    environment:
+      - HLLSET_CORTEX_URL=http://hllset-cortex:9092
+      - IPFS_API_URL=http://ipfs:5001
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      hllset-cortex:
+        condition: service_healthy
+    networks:
+      - ewm-net
+    restart: unless-stopped
+    # GPU support — enable by setting DEEPSEEK_OCR_GPU_ENABLED=true in .env
+    # Requires: nvidia-container-toolkit installed on host
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9093/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # medical-diagnostic — Clinical Diagnosis Service (EWM backend)
+  # ═══════════════════════════════════════════════════════════════════════════
+  medical-diagnostic:
+    build:
+      context: ./medical-diagnostic
+      dockerfile: Dockerfile
+    container_name: ewm-medical-diagnostic
+    ports:
+      - "${MEDICAL_DIAGNOSTIC_PORT:-9094}:9094"
+    environment:
+      - IPFS_API_URL=http://ipfs:5001
+      - DIAGNOSTIC_ENGINE=${DIAGNOSTIC_ENGINE:-simulated}
+      - HLLSET_NEXT_URL=http://hllset-next:9090
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - medical_data:/app/data
+    depends_on:
+      ipfs:
+        condition: service_healthy
+      hllset-next:
+        condition: service_healthy
+    networks:
+      - ewm-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9094/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # ewm-gateway — FastAPI Central Gateway
+  # ═══════════════════════════════════════════════════════════════════════════
+  ewm-gateway:
+    build:
+      context: ./ewm-gateway
+      dockerfile: Dockerfile
+    container_name: ewm-gateway
+    ports:
+      - "${GATEWAY_PORT:-8000}:8000"
+    environment:
+      - HLLSET_CORTEX_URL=http://hllset-cortex:9092
+      - DEEPSEEK_OCR_URL=http://deepseek-ocr:9093
+      - MEDICAL_DIAGNOSTIC_URL=http://medical-diagnostic:9094
+      - IPFS_API_URL=http://ipfs:5001
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      hllset-cortex:
+        condition: service_healthy
+      deepseek-ocr:
+        condition: service_started
+      medical-diagnostic:
+        condition: service_healthy
+    networks:
+      - ewm-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # ewm-ui — NiceGUI Frontend
+  # ═══════════════════════════════════════════════════════════════════════════
+  ewm-ui:
+    build:
+      context: ./ewm-ui
+      dockerfile: Dockerfile
+    container_name: ewm-ui
+    ports:
+      - "${UI_PORT:-8080}:8080"
+    environment:
+      - GATEWAY_URL=http://ewm-gateway:8000
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      ewm-gateway:
+        condition: service_healthy
+    networks:
+      - ewm-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Networks
+# ═══════════════════════════════════════════════════════════════════════════
+networks:
+  ewm-net:
+    name: ${EWM_NETWORK:-ewm-net}
+    driver: bridge
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Volumes
+# ═══════════════════════════════════════════════════════════════════════════
+volumes:
+  ipfs_data:
+    name: ewm-ipfs-data
+  hllset_data:
+    name: ewm-hllset-data
+  medical_data:
+    name: ewm-medical-data
