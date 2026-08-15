@@ -16,10 +16,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+# torch + torchvision (CPU wheels) — for the merged vision encoder.
+RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py ecg_cards.py .
+COPY main.py ecg_cards.py xray_cards.py lab_cards.py knee_cards.py ct_cards.py vision.py knee_mri.py knee_cnn.py knee_cnn.pt .
 
 HEALTHCHECK --interval=15s --timeout=10s --start-period=15s --retries=3 \
     CMD curl -f http://localhost:9094/health || exit 1

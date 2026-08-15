@@ -54,6 +54,9 @@ try:
 except ImportError:  # pragma: no cover
     IMAGE_OCR_AVAILABLE = False
 
+# File types treated as plain text rather than pixel images.
+_TEXT_EXTENSIONS = (".txt", ".md", ".csv", ".json", ".log", ".text", ".rtf")
+
 app = FastAPI(
     title="DeepSeek-OCR Service",
     description="GPU-accelerated OCR inference (DeepSeek-OCR model)",
@@ -118,11 +121,13 @@ async def ocr(request: Request):
 
 
 @app.post("/ocr/upload")
-async def ocr_upload(file: UploadFile = File(...)):
+async def ocr_upload(file: UploadFile = File(...), mode: str = "full"):
     """Upload a PDF or image → extract text → OCR pipeline.
 
     - PDF: text extracted natively via pypdf (works on CPU).
     - Image (PNG/JPEG): OCR via Tesseract — CPU-only, no GPU needed.
+    - mode="full" (default): OCR the whole image → all contents.
+    - mode="ecg": ECG printout crop (header + footer bands).
     """
     raw = await file.read()
     name = (file.filename or "").lower()
@@ -141,24 +146,36 @@ async def ocr_upload(file: UploadFile = File(...)):
             source = "pdf"
         except Exception as e:
             return JSONResponse({"error": f"PDF extraction failed: {e}"}, status_code=422)
-    elif name.endswith((".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp")):
-        # CPU-first design: Tesseract handles printed/scanned report text
-        # with no GPU dependency.
+    elif name.endswith(_TEXT_EXTENSIONS):
+        # Plain-text report files (txt/md/csv/json) — read the text directly
+        # instead of treating them as unreadable "images".
+        try:
+            extracted = raw.decode("utf-8").strip()
+        except UnicodeDecodeError:
+            extracted = raw.decode("latin-1", errors="ignore").strip()
+        source = "text"
+    elif name.endswith((".dcm", ".dicom")):
+        return JSONResponse(
+            {"error": "DICOM images can't be read as text or pixels here — "
+                      "paste the report text instead."},
+            status_code=415,
+        )
+    else:
+        # OCR any non-PDF file as an image. Pillow opens PNG/JPEG/TIFF/BMP as
+        # well as WebP/JFIF/GIF, so accept them too instead of 415-ing.
         if not IMAGE_OCR_AVAILABLE:
             return JSONResponse(
                 {"error": "Image OCR unavailable (tesseract/pytesseract not installed)"},
                 status_code=503,
             )
         try:
-            extracted = _ocr_image_cpu(raw)
+            extracted = _ocr_image_ecg(raw) if mode == "ecg" else _ocr_image_full(raw)
             source = "image"
         except Exception as e:
-            return JSONResponse({"error": f"Image OCR failed: {e}"}, status_code=422)
-    else:
-        return JSONResponse(
-            {"error": "Unsupported file type (use .pdf, .png, .jpg, .jpeg, .tif)"},
-            status_code=415,
-        )
+            return JSONResponse(
+                {"error": f"Unsupported or unreadable image: {e}. Use .pdf, .png, .jpg, .jpeg, .tif, .webp, .jfif."},
+                status_code=415,
+            )
 
     if not extracted:
         return {
@@ -181,29 +198,44 @@ async def ocr_upload(file: UploadFile = File(...)):
     }
 
 
-def _ocr_image_cpu(raw: bytes) -> str:
-    """CPU-only image OCR via Tesseract (printed/scanned report text).
+def _upscale(im, target_width=4000):
+    if im.width < target_width:
+        scale = target_width / im.width
+        return im.resize((int(im.width * scale), int(im.height * scale)), Image.LANCZOS)
+    return im
 
-    ECG printouts put the text in the top header band and a bottom technical
-    line; the middle is waveform traces — pure noise for OCR. Crop to the
-    text zones, upscale, and OCR each, skipping the waveform band entirely.
-    """
+
+def _ocr_image_full(raw: bytes) -> str:
+    """OCR the entire image — produce all text contents (no cropping).
+
+    Tries several page-segmentation modes and keeps the longest result so
+    full-page documents aren't truncated to header/footer bands."""
+    image = ImageOps.autocontrast(_upscale(Image.open(io.BytesIO(raw)).convert("L")))
+    best = ""
+    for psm in ("3", "4", "6", "11"):
+        try:
+            t = pytesseract.image_to_string(image, config=f"--psm {psm}").strip()
+        except Exception:
+            continue
+        if len(t) > len(best):
+            best = t
+    return best
+
+
+def _ocr_image_ecg(raw: bytes) -> str:
+    """ECG printout OCR: crop to the top header band and bottom technical
+    line (the middle is waveform noise), then merge. Falls back to full-image
+    OCR when the bands yield nothing."""
     image = Image.open(io.BytesIO(raw)).convert("L")
     w, h = image.size
-
-    def upscale(im, target_width=4000):
-        if im.width < target_width:
-            scale = target_width / im.width
-            return im.resize((int(im.width * scale), int(im.height * scale)), Image.LANCZOS)
-        return im
 
     def score(t: str) -> int:
         tl = t.lower()
         hits = sum(1 for k in _ECG_KEYWORDS if k in tl)
         return hits * 10 + sum(c.isdigit() for c in tl)
 
-    top = ImageOps.autocontrast(upscale(image.crop((0, 0, w, int(h * 0.45)))))
-    bottom = ImageOps.autocontrast(upscale(image.crop((0, int(h * 0.90), w, h))))
+    top = ImageOps.autocontrast(_upscale(image.crop((0, 0, w, int(h * 0.45)))))
+    bottom = ImageOps.autocontrast(_upscale(image.crop((0, int(h * 0.90), w, h))))
 
     # Try several page-segmentation modes on the header band, keep the best.
     best_top = ""
@@ -224,9 +256,7 @@ def _ocr_image_cpu(raw: bytes) -> str:
     merged = "\n".join(x for x in (best_top, bottom_text) if x).strip()
     if merged:
         return merged
-
-    full = ImageOps.autocontrast(upscale(image))
-    return pytesseract.image_to_string(full, config="--psm 3").strip()
+    return _ocr_image_full(raw)
 
 
 _ECG_KEYWORDS = [

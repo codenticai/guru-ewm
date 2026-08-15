@@ -28,6 +28,7 @@ import httpx
 HLLSET_CORTEX_URL = os.environ.get("HLLSET_CORTEX_URL", "http://hllset-cortex:9092")
 DEEPSEEK_OCR_URL = os.environ.get("DEEPSEEK_OCR_URL", "http://deepseek-ocr:9093")
 MEDICAL_DIAGNOSTIC_URL = os.environ.get("MEDICAL_DIAGNOSTIC_URL", "http://medical-diagnostic:9094")
+NLP_MODEL_URL = os.environ.get("NLP_MODEL_URL", "http://nlp-model:9095")
 IPFS_API_URL = os.environ.get("IPFS_API_URL", "http://ipfs:5001")
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 
@@ -47,8 +48,20 @@ _client: httpx.AsyncClient | None = None
 async def get_client() -> httpx.AsyncClient:
     global _client
     if _client is None:
-        _client = httpx.AsyncClient(timeout=httpx.Timeout(30.0))
+        _client = httpx.AsyncClient(timeout=httpx.Timeout(120.0))
     return _client
+
+
+def _infer_modality(instruction: str) -> str:
+    """Best-effort modality hint from a free-text instruction."""
+    s = (instruction or "").lower()
+    if any(k in s for k in ("knee", "mri", "meniscus", "acl", "ligament")):
+        return "MR"
+    if " ct" in s or "ct scan" in s or "computed tomography" in s:
+        return "CT"
+    if any(k in s for k in ("x-ray", "xray", "chest", "radiograph")):
+        return "DX"
+    return "DX"
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -64,6 +77,7 @@ async def root():
             "hllset-cortex": HLLSET_CORTEX_URL,
             "deepseek-ocr": DEEPSEEK_OCR_URL,
             "medical-diagnostic": MEDICAL_DIAGNOSTIC_URL,
+            "nlp-model": NLP_MODEL_URL,
             "ipfs": IPFS_API_URL,
         },
     }
@@ -94,6 +108,13 @@ async def health():
         services_status["medical-diagnostic"] = r.json() if r.status_code == 200 else {"status": "unhealthy"}
     except Exception:
         services_status["medical-diagnostic"] = {"status": "unreachable"}
+
+    # Check nlp-model
+    try:
+        r = await client.get(f"{NLP_MODEL_URL}/health")
+        services_status["nlp-model"] = r.json() if r.status_code == 200 else {"status": "unhealthy"}
+    except Exception:
+        services_status["nlp-model"] = {"status": "unreachable"}
 
     # Check IPFS
     try:
@@ -130,7 +151,12 @@ async def list_services():
         "medical-diagnostic": {
             "url": MEDICAL_DIAGNOSTIC_URL,
             "type": "clinical-diagnosis",
-            "endpoints": ["/health", "/diagnose", "/diagnose/text", "/diagnose/image", "/engines"],
+            "endpoints": ["/health", "/analyze/hllset", "/analyze/document", "/analyze/ecg", "/classify", "/classify/knee"],
+        },
+        "nlp-model": {
+            "url": NLP_MODEL_URL,
+            "type": "english-nlp",
+            "endpoints": ["/health", "/chat", "/nlp/query", "/nlp/ingest", "/nlp/ingest/document"],
         },
         "ipfs": {
             "url": IPFS_API_URL,
@@ -205,65 +231,32 @@ async def ocr_full_pipeline(request: Request):
     }
 
 
+@app.post("/ocr/extract")
+async def ocr_extract(file: UploadFile = File(...)):
+    """Extract text from an uploaded file (image/PDF) via deepseek-ocr."""
+    client = await get_client()
+    try:
+        files = {"file": (file.filename, await file.read(), file.content_type or "application/octet-stream")}
+        r = await client.post(f"{DEEPSEEK_OCR_URL}/ocr/upload?mode=full", files=files)
+        return JSONResponse(content=r.json(), status_code=r.status_code)
+    except httpx.ConnectError:
+        raise HTTPException(503, "deepseek-ocr service unreachable")
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # Diagnostic Pipeline
 # ═══════════════════════════════════════════════════════════════════════
 
-@app.post("/diagnose")
-async def diagnose(request: Request):
-    """Forward to medical-diagnostic service."""
+@app.post("/analyze/text")
+async def analyze_text(request: Request):
+    """Text query → NanoLM diagnostic lattice report (medical-diagnostic /analyze/hllset)."""
     body = await request.json()
     client = await get_client()
     try:
-        r = await client.post(f"{MEDICAL_DIAGNOSTIC_URL}/diagnose", json=body)
+        r = await client.post(f"{MEDICAL_DIAGNOSTIC_URL}/analyze/hllset", json=body)
         return JSONResponse(content=r.json(), status_code=r.status_code)
     except httpx.ConnectError:
         raise HTTPException(503, "medical-diagnostic service unreachable")
-
-
-@app.post("/diagnose/text")
-async def diagnose_text(request: Request):
-    """Text-based diagnosis: forward OCR'd text to medical-diagnostic."""
-    body = await request.json()
-    client = await get_client()
-    try:
-        r = await client.post(f"{MEDICAL_DIAGNOSTIC_URL}/diagnose/text", json=body)
-        return JSONResponse(content=r.json(), status_code=r.status_code)
-    except httpx.ConnectError:
-        raise HTTPException(503, "medical-diagnostic service unreachable")
-
-
-@app.post("/diagnose/full")
-async def diagnose_full_pipeline(request: Request):
-    """Full pipeline: OCR → HLLSet → text → diagnosis → IPFS."""
-    body = await request.json()
-    client = await get_client()
-
-    # Step 1: OCR inference
-    try:
-        ocr_r = await client.post(f"{DEEPSEEK_OCR_URL}/ocr", json=body)
-        if ocr_r.status_code != 200:
-            return JSONResponse(content={"error": "OCR inference failed"}, status_code=502)
-        ocr_result = ocr_r.json()
-    except httpx.ConnectError:
-        raise HTTPException(503, "deepseek-ocr service unreachable")
-
-    ocr_text = ocr_result.get("text", "")
-
-    # Step 2: Diagnosis over the OCR'd text
-    try:
-        diag_r = await client.post(
-            f"{MEDICAL_DIAGNOSTIC_URL}/diagnose/text",
-            json={"text": ocr_text},
-        )
-        diag_result = diag_r.json() if diag_r.status_code == 200 else {"error": "diagnosis failed"}
-    except httpx.ConnectError:
-        diag_result = {"error": "medical-diagnostic unreachable"}
-
-    return {
-        "ocr": ocr_result,
-        "diagnosis": diag_result,
-    }
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -290,10 +283,17 @@ async def analyze_ecg(
     # Step 1: OCR — extract text from the uploaded document
     try:
         ocr_files = {"file": (file.filename, await file.read(), file.content_type or "application/octet-stream")}
-        ocr_r = await client.post(f"{DEEPSEEK_OCR_URL}/ocr/upload", files=ocr_files)
+        # ECG printouts use the band-cropped OCR; everything else reads the
+        # full page so no content is missed.
+        ocr_mode = "ecg" if (modality or "ECG").upper() == "ECG" else "full"
+        ocr_r = await client.post(f"{DEEPSEEK_OCR_URL}/ocr/upload?mode={ocr_mode}", files=ocr_files)
         if ocr_r.status_code != 200:
+            try:
+                detail = ocr_r.json().get("error", ocr_r.text[:300])
+            except Exception:
+                detail = ocr_r.text[:300]
             return JSONResponse(
-                content={"error": "OCR failed", "detail": ocr_r.text[:500]},
+                content={"error": f"OCR failed: {detail}"},
                 status_code=502,
             )
         ocr_result = ocr_r.json()
@@ -303,6 +303,35 @@ async def analyze_ecg(
     extracted_text = ocr_result.get("text") or ocr_result.get("page_text") or ""
 
     # Step 2: Diagnosis — build a final structured report from the text
+    if not extracted_text.strip():
+        return {
+            "filename": file.filename,
+            "modality": modality,
+            "instruction": instruction,
+            "ocr": {
+                "source": ocr_result.get("source"),
+                "extracted_text": "",
+                "mode": ocr_result.get("mode"),
+                "notice": ocr_result.get("notice"),
+            },
+            "report": {
+                "report_type": "nanolm",
+                "engine": "nanolm",
+                "modality": modality,
+                "findings": [],
+                "assessment": (
+                    "No text could be extracted from this file. If it's a scan "
+                    "image (X-ray/CT/MRI), attach it as an image instead, or "
+                    "paste the report text directly."
+                ),
+                "recommendation": (
+                    "NanoLM lattice-matched reference criteria (not a medical "
+                    "device). A licensed clinician must confirm before any "
+                    "clinical use."
+                ),
+            },
+        }
+
     try:
         diag_r = await client.post(
             f"{MEDICAL_DIAGNOSTIC_URL}/analyze/hllset",
@@ -334,6 +363,223 @@ async def analyze_document(
 ):
     """Generic medical document analysis (same pipeline as /analyze/ecg)."""
     return await analyze_ecg(file, modality, instruction)
+
+
+@app.post("/analyze/image")
+async def analyze_image(
+    file: UploadFile = File(...),
+    instruction: str = Form(""),
+):
+    """Medical image diagnosis: image → vision-encoder zero-shot classification."""
+    client = await get_client()
+    files = {"file": (file.filename, await file.read(), file.content_type or "application/octet-stream")}
+    try:
+        r = await client.post(f"{MEDICAL_DIAGNOSTIC_URL}/classify?top_k=10", files=files)
+    except httpx.TimeoutException:
+        return JSONResponse(
+            content={"error": "Vision model is still loading (first run). Please retry in a minute."},
+            status_code=504,
+        )
+    except httpx.HTTPError:
+        raise HTTPException(503, "medical-diagnostic service unreachable")
+    if r.status_code != 200:
+        return JSONResponse(content={"error": f"vision classification failed: {r.text[:300]}"}, status_code=502)
+
+    result = r.json()
+    raw_matches = result.get("matches", [])
+    modality = _infer_modality(instruction)
+    # Zero-shot CLIP/BiomedCLIP scores are not calibrated; require a minimum
+    # similarity so blank/irrelevant images don't surface spurious findings.
+    MIN_SCORE = float(os.environ.get("VISION_MIN_SCORE", "0.22"))
+    matches = [
+        {"signal": m.get("signal"), "note": m.get("note"), "severity": m.get("severity"), "bss": m.get("score")}
+        for m in raw_matches
+        if (m.get("score") or 0.0) >= MIN_SCORE
+    ]
+    # "clear/normal" labels aren't findings — treat them as a normal-study signal.
+    normals = [m for m in matches if m["severity"] == "normal"]
+    findings = [m for m in matches if m["severity"] != "normal"]
+    criticals = [f for f in findings if f["severity"] == "critical"]
+    if criticals:
+        assessment = f"{len(criticals)} critical finding(s) — urgent clinician review required."
+    elif findings:
+        assessment = f"{len(findings)} possible finding(s) — clinician review advised."
+    elif normals:
+        top_norm = f"{normals[0]['signal'].rsplit('.', 1)[-1]} {normals[0]['bss']:.2f}"
+        assessment = f"No acute finding — closest match '{top_norm}' (low confidence)."
+    else:
+        top = raw_matches[0] if raw_matches else None
+        if top and (top.get("score") or 0.0) >= 0.15:
+            label = top["signal"].rsplit(".", 1)[-1]
+            assessment = (
+                f"Closest match: {label} (confidence {top['score']:.2f}, low). "
+                "Zero-shot image classification is approximate — paste the "
+                "report text for reliable analysis."
+            )
+        else:
+            assessment = "No recognizable finding in this image."
+
+    report = {
+        "report_type": "nanolm-vision",
+        "engine": "vision-encoder",
+        "modality": modality,
+        "findings": findings,
+        "assessment": assessment,
+        "recommendation": (
+            "Vision-encoder zero-shot retrieval (not a medical device). "
+            "A licensed clinician must confirm before any clinical use."
+        ),
+    }
+    return {
+        "filename": file.filename,
+        "modality": modality,
+        "instruction": instruction,
+        "report": report,
+    }
+
+
+@app.post("/analyze/knee")
+async def analyze_knee(
+    file: UploadFile = File(...),
+    instruction: str = Form(""),
+):
+    """Knee MRI diagnosis: lattice fingerprint classifier, with a BiomedCLIP
+    zero-shot fallback for real scans that don't match the synthetic library.
+
+    NOTE: the synthetic-trained CNN (knee_cnn.py, /classify/knee/deep) is NOT
+    used here — softmax on out-of-distribution (real) scans is over-confident
+    (it mislabels a real knee MRI as "patellar dislocation" at 1.0). The CNN
+    is a CPU-only training/retraining pipeline for a real labeled dataset."""
+    client = await get_client()
+    files = {"file": (file.filename, await file.read(), file.content_type or "application/octet-stream")}
+    try:
+        r = await client.post(f"{MEDICAL_DIAGNOSTIC_URL}/classify/knee", files=files)
+    except httpx.HTTPError:
+        raise HTTPException(503, "medical-diagnostic service unreachable")
+    if r.status_code != 200:
+        return JSONResponse(content={"error": f"knee classification failed: {r.text[:300]}"}, status_code=502)
+
+    result = r.json()
+    detected = result.get("detected") or []
+    top_label = result.get("top_label") or "Normal"
+    top_conf = result.get("confidence") or 0.0
+
+    if detected:
+        findings = [
+            {"signal": s["abnormality"], "severity": s["severity"],
+             "bss": s["confidence"],
+             "note": f"{s['label']} — confidence {s['confidence']:.2f}."}
+            for s in detected[:3]
+        ]
+        assessment = f"Top finding: {top_label} (confidence {top_conf:.2f})."
+        engine = "hllset-knee"
+    else:
+        # Fingerprint found nothing (real scans rarely match the synthetic
+        # library). Fall back to BiomedCLIP zero-shot over the knee labels.
+        engine = "vision-encoder"
+        findings = []
+        assessment = (
+            "No knee abnormality matched the reference library. If this is a "
+            "different study, paste the report text for reliable analysis."
+        )
+        try:
+            r2 = await client.post(f"{MEDICAL_DIAGNOSTIC_URL}/classify?top_k=10", files=files)
+            if r2.status_code == 200:
+                raw_matches = r2.json().get("matches", [])
+                knee_matches = [m for m in raw_matches if m["signal"].startswith("knee.")]
+                MIN_SCORE = float(os.environ.get("VISION_MIN_SCORE", "0.22"))
+                findings = [
+                    {"signal": m["signal"], "severity": m["severity"], "bss": m["score"], "note": m["note"]}
+                    for m in knee_matches
+                    if (m.get("score") or 0.0) >= MIN_SCORE
+                ][:3]
+                if findings:
+                    assessment = (
+                        f"{len(findings)} possible knee finding(s) — low-confidence "
+                        "zero-shot (the specific finding can't be reliably "
+                        "distinguished from the image); paste the report text for "
+                        "reliable analysis."
+                    )
+        except httpx.HTTPError:
+            pass
+
+    report = {
+        "report_type": "nanolm-knee",
+        "engine": engine,
+        "modality": "MR",
+        "findings": findings,
+        "assessment": assessment,
+        "recommendation": (
+            "Lattice fingerprint classification (not a medical device). "
+            "A licensed clinician must confirm before any clinical use."
+        ),
+    }
+    return {
+        "filename": file.filename,
+        "modality": "MR",
+        "instruction": instruction,
+        "report": report,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# NLP Chat (NanoLM English model)
+# ═══════════════════════════════════════════════════════════════════════
+
+@app.post("/chat")
+async def chat(request: Request):
+    """Forward a chat message to the NanoLM English NLP model."""
+    body = await request.json()
+    client = await get_client()
+    try:
+        r = await client.post(f"{NLP_MODEL_URL}/chat", json=body)
+        return JSONResponse(content=r.json(), status_code=r.status_code)
+    except httpx.ConnectError:
+        raise HTTPException(503, "nlp-model service unreachable")
+
+
+@app.post("/session/new")
+async def session_new():
+    """Create a new chat session."""
+    client = await get_client()
+    try:
+        r = await client.post(f"{NLP_MODEL_URL}/session/new")
+        return JSONResponse(content=r.json(), status_code=r.status_code)
+    except httpx.ConnectError:
+        raise HTTPException(503, "nlp-model service unreachable")
+
+
+@app.get("/sessions")
+async def list_sessions():
+    """List chat sessions."""
+    client = await get_client()
+    try:
+        r = await client.get(f"{NLP_MODEL_URL}/sessions")
+        return JSONResponse(content=r.json(), status_code=r.status_code)
+    except httpx.ConnectError:
+        raise HTTPException(503, "nlp-model service unreachable")
+
+
+@app.get("/session/{session_id}")
+async def get_session(session_id: str):
+    """Get a single chat session's history."""
+    client = await get_client()
+    try:
+        r = await client.get(f"{NLP_MODEL_URL}/session/{session_id}")
+        return JSONResponse(content=r.json(), status_code=r.status_code)
+    except httpx.ConnectError:
+        raise HTTPException(503, "nlp-model service unreachable")
+
+
+@app.delete("/session/{session_id}")
+async def delete_session(session_id: str):
+    """Delete a chat session."""
+    client = await get_client()
+    try:
+        r = await client.delete(f"{NLP_MODEL_URL}/session/{session_id}")
+        return JSONResponse(content=r.json(), status_code=r.status_code)
+    except httpx.ConnectError:
+        raise HTTPException(503, "nlp-model service unreachable")
 
 
 # ═══════════════════════════════════════════════════════════════════════

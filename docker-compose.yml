@@ -41,7 +41,7 @@ services:
   # ═══════════════════════════════════════════════════════════════════════════
   hllset-next:
     build:
-      context: D:\innovation\hllset-next
+      context: ${HLLSET_NEXT_CONTEXT:-./hllset-next}
       dockerfile: Dockerfile
     container_name: ewm-hllset-next
     ports:
@@ -67,7 +67,7 @@ services:
   # ═══════════════════════════════════════════════════════════════════════════
   hllset-cortex:
     build:
-      context: D:\innovation\DeepSeek-OCR\hllset_cortex
+      context: ${HLLSET_CORTEX_CONTEXT:-./hllset-cortex}
       dockerfile: Dockerfile
     container_name: ewm-hllset-cortex
     ports:
@@ -137,16 +137,20 @@ services:
       - "${MEDICAL_DIAGNOSTIC_PORT:-9094}:9094"
     environment:
       - IPFS_API_URL=http://ipfs:5001
-      - DIAGNOSTIC_ENGINE=${DIAGNOSTIC_ENGINE:-simulated}
       - HLLSET_NEXT_URL=http://hllset-next:9090
+      - DEEPSEEK_OCR_URL=http://deepseek-ocr:9093
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - VISION_MODEL=${VISION_MODEL:-hf-hub:microsoft/BiomedCLIP-PubMedBERT_256-vit_base_patch16_224}
     volumes:
       - medical_data:/app/data
+      - hf_model_cache:/root/.cache/huggingface
     depends_on:
       ipfs:
         condition: service_healthy
       hllset-next:
         condition: service_healthy
+      deepseek-ocr:
+        condition: service_started
     networks:
       - ewm-net
     restart: unless-stopped
@@ -157,8 +161,37 @@ services:
       retries: 3
       start_period: 15s
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # ewm-gateway — FastAPI Central Gateway
+  # ═══════════════════════════════════════════════════════════════════════════  # nlp-model — NanoLM English NLP Model (model #2)
+  # ═══════════════════════════════════════════════════════════════════════
+  nlp-model:
+    build:
+      context: ./nlp-model
+      dockerfile: Dockerfile
+    container_name: ewm-nlp-model
+    ports:
+      - "${NLP_MODEL_PORT:-9095}:9095"
+    environment:
+      - HLLSET_NEXT_URL=http://hllset-next:9090
+      - IPFS_API_URL=http://ipfs:5001
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - nlp_data:/app/data
+    depends_on:
+      ipfs:
+        condition: service_healthy
+      hllset-next:
+        condition: service_healthy
+    networks:
+      - ewm-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9095/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ═══════════════════════════════════════════════════════════════════════  # ewm-gateway — FastAPI Central Gateway
   # ═══════════════════════════════════════════════════════════════════════════
   ewm-gateway:
     build:
@@ -171,6 +204,7 @@ services:
       - HLLSET_CORTEX_URL=http://hllset-cortex:9092
       - DEEPSEEK_OCR_URL=http://deepseek-ocr:9093
       - MEDICAL_DIAGNOSTIC_URL=http://medical-diagnostic:9094
+      - NLP_MODEL_URL=http://nlp-model:9095
       - IPFS_API_URL=http://ipfs:5001
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     depends_on:
@@ -180,6 +214,8 @@ services:
         condition: service_started
       medical-diagnostic:
         condition: service_healthy
+      nlp-model:
+        condition: service_started
     networks:
       - ewm-net
     restart: unless-stopped
@@ -203,6 +239,12 @@ services:
     environment:
       - GATEWAY_URL=http://ewm-gateway:8000
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      # Opt-in: mount the Docker socket so the UI can show host resource usage.
+      # Default (/dev/null) disables it safely. Enable by setting
+      # DOCKER_SOCK_MOUNT=/var/run/docker.sock in .env
+      # (or //var/run/docker.sock on Docker Desktop Windows).
+      - ${DOCKER_SOCK_MOUNT:-/dev/null}:/var/run/docker.sock:ro
     depends_on:
       ewm-gateway:
         condition: service_healthy
@@ -234,3 +276,7 @@ volumes:
     name: ewm-hllset-data
   medical_data:
     name: ewm-medical-data
+  hf_model_cache:
+    name: ewm-hf-model-cache
+  nlp_data:
+    name: ewm-nlp-data

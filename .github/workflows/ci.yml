@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate compose file
+        run: docker compose config --quiet
+
+      # hllset-next / hllset-cortex are vendored separately; build the
+      # services whose sources live in this repository.
+      - name: Build repo-local images
+        run: |
+          docker compose build \
+            deepseek-ocr \
+            medical-diagnostic \
+            nlp-model \
+            ewm-gateway \
+            ewm-ui

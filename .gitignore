@@ -217,6 +217,25 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Project-specific — guru-ewm
+# ── Project-specific — guru-ewm ─────────────────────────────────────
+# Local environment overrides (the committed template is .env.example)
+.env
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+*.swp
+*~
+
+# Local runtime data (Docker volume names; only appear if run outside Docker)
+nlp_data/
+medical_data/
+hllset_data/
+hf_model_cache/
+
+# Internal-only artifacts (not shipped to end users)
 docs/
 tests/
+scripts/

@@ -1,5 +1,8 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# ewm-ui — NiceGUI Frontend
+# nlp-model — NanoLM English NLP Model (model #2)
+# ─────────────────────────────────────────────────────────────────────────────
+# Python/FastAPI service. CPU-only. Consumes hllset-next (:9090) for lattice
+# ingestion and ipfs (:5001) for document ingestion + snapshots.
 # ─────────────────────────────────────────────────────────────────────────────
 FROM python:3.11-slim-bookworm
 
@@ -12,11 +15,11 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py logo.jpeg .
+COPY main.py english_cards.py .
 
-HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+HEALTHCHECK --interval=15s --timeout=10s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost:9095/health || exit 1
 
-EXPOSE 8080
+EXPOSE 9095
 
 CMD ["python", "main.py"]
