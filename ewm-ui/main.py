@@ -15,7 +15,7 @@ import httpx
 from nicegui import ui, app
 
 # ── Config ──────────────────────────────────────────────────────────
-GATEWAY_URL = os.environ.get("GATEWAY_URL", "http://ewm-gateway:8000")
+GATEWAY_URL = os.environ.get("GATEWAY_URL", "http://ewm-gateway:8001")
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO))

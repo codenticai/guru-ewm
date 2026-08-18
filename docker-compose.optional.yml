@@ -1,0 +1,77 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Guru-EWM — Optional services override
+# ─────────────────────────────────────────────────────────────────────────────
+# Adds hllset-next and hllset-cortex, whose sources live OUTSIDE this
+# repository. These are NOT required to run the application — retrieval is
+# computed locally in Python and durability is provided by the IPFS snapshots.
+#
+# To enable them:
+#   1. Copy the hllset-next and hllset-cortex projects next to this repo, or
+#      point the build contexts at your local copies in .env:
+#        HLLSET_NEXT_CONTEXT=/path/to/hllset-next
+#        HLLSET_CORTEX_CONTEXT=/path/to/hllset_cortex
+#   2. Run with both files:
+#        docker compose -f docker-compose.yml -f docker-compose.optional.yml up -d --build
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # hllset-next — HLLSet Algebra Platform (Rust HTTP API)
+  # ═══════════════════════════════════════════════════════════════════════════
+  hllset-next:
+    build:
+      context: ${HLLSET_NEXT_CONTEXT:-./hllset-next}
+      dockerfile: Dockerfile
+    container_name: ewm-hllset-next
+    ports:
+      - "${HLLSET_NEXT_PORT:-9090}:9090"
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - HLLSET_STORAGE=${HLLSET_STORAGE:-ipfrs}
+      - HLLSET_DATA_DIR=/data
+    volumes:
+      - hllset_data:/data
+    networks:
+      - ewm-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/api/v1/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # hllset-cortex — HLLSet Semantic Compressor
+  # ═══════════════════════════════════════════════════════════════════════════
+  hllset-cortex:
+    build:
+      context: ${HLLSET_CORTEX_CONTEXT:-./hllset-cortex}
+      dockerfile: Dockerfile
+    container_name: ewm-hllset-cortex
+    ports:
+      - "${HLLSET_CORTEX_PORT:-9092}:9092"
+    environment:
+      - IPFS_API_URL=http://ipfs:5001
+      - PORT=9092
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      ipfs:
+        condition: service_healthy
+    networks:
+      - ewm-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9092/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Volumes (declared here because they are only used by the optional services)
+# ═══════════════════════════════════════════════════════════════════════════
+volumes:
+  hllset_data:
+    name: ewm-hllset-data

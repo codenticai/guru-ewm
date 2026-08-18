@@ -1,14 +1,18 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Guru-EWM — Docker Compose
 # ─────────────────────────────────────────────────────────────────────────────
-# Services:
+# Core services (all sources live in this repository):
 #   ipfs               — Content-addressed storage (ipfs/kubo)
-#   hllset-next        — HLLSet Algebra platform (Rust --serve HTTP API :9090)
-#   hllset-cortex      — HLLSet semantic compressor (Flask :9092)
-#   deepseek-ocr       — GPU-accelerated OCR inference (FastAPI :9093, optional GPU)
+#   deepseek-ocr       — OCR inference (FastAPI :9093, Tesseract CPU)
 #   medical-diagnostic — Clinical diagnosis service (FastAPI :9094)
-#   ewm-gateway        — Central API gateway (FastAPI :8000)
+#   nlp-model          — NanoLM English NLP model (FastAPI :9095)
+#   ewm-gateway        — Central API gateway (FastAPI :8001)
 #   ewm-ui             — Generic UI (NiceGUI :8080)
+#
+# Optional services (external sources, NOT required to run the app):
+#   hllset-next        — HLLSet algebra API (Rust :9090)
+#   hllset-cortex      — HLLSet semantic compressor (Flask :9092)
+#   → enable via:  docker compose -f docker-compose.yml -f docker-compose.optional.yml up -d
 # ─────────────────────────────────────────────────────────────────────────────
 
 services:
@@ -37,60 +41,7 @@ services:
       start_period: 15s
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # hllset-next — HLLSet Algebra Platform (Rust HTTP API)
-  # ═══════════════════════════════════════════════════════════════════════════
-  hllset-next:
-    build:
-      context: ${HLLSET_NEXT_CONTEXT:-./hllset-next}
-      dockerfile: Dockerfile
-    container_name: ewm-hllset-next
-    ports:
-      - "${HLLSET_NEXT_PORT:-9090}:9090"
-    environment:
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - HLLSET_STORAGE=${HLLSET_STORAGE:-ipfrs}
-      - HLLSET_DATA_DIR=/data
-    volumes:
-      - hllset_data:/data
-    networks:
-      - ewm-net
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9090/api/v1/health"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # hllset-cortex — HLLSet Semantic Compressor
-  # ═══════════════════════════════════════════════════════════════════════════
-  hllset-cortex:
-    build:
-      context: ${HLLSET_CORTEX_CONTEXT:-./hllset-cortex}
-      dockerfile: Dockerfile
-    container_name: ewm-hllset-cortex
-    ports:
-      - "${HLLSET_CORTEX_PORT:-9092}:9092"
-    environment:
-      - IPFS_API_URL=http://ipfs:5001
-      - PORT=9092
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-    depends_on:
-      ipfs:
-        condition: service_healthy
-    networks:
-      - ewm-net
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9092/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # deepseek-ocr — GPU-Accelerated OCR Model Service
+  # deepseek-ocr — OCR Model Service (Tesseract, CPU-only)
   # ═══════════════════════════════════════════════════════════════════════════
   deepseek-ocr:
     build:
@@ -104,7 +55,7 @@ services:
       - IPFS_API_URL=http://ipfs:5001
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     depends_on:
-      hllset-cortex:
+      ipfs:
         condition: service_healthy
     networks:
       - ewm-net
@@ -147,8 +98,6 @@ services:
     depends_on:
       ipfs:
         condition: service_healthy
-      hllset-next:
-        condition: service_healthy
       deepseek-ocr:
         condition: service_started
     networks:
@@ -161,8 +110,9 @@ services:
       retries: 3
       start_period: 15s
 
-  # ═══════════════════════════════════════════════════════════════════════════  # nlp-model — NanoLM English NLP Model (model #2)
-  # ═══════════════════════════════════════════════════════════════════════
+  # ═══════════════════════════════════════════════════════════════════════════
+  # nlp-model — NanoLM English NLP Model
+  # ═══════════════════════════════════════════════════════════════════════════
   nlp-model:
     build:
       context: ./nlp-model
@@ -179,8 +129,6 @@ services:
     depends_on:
       ipfs:
         condition: service_healthy
-      hllset-next:
-        condition: service_healthy
     networks:
       - ewm-net
     restart: unless-stopped
@@ -191,7 +139,8 @@ services:
       retries: 3
       start_period: 15s
 
-  # ═══════════════════════════════════════════════════════════════════════  # ewm-gateway — FastAPI Central Gateway
+  # ═══════════════════════════════════════════════════════════════════════════
+  # ewm-gateway — FastAPI Central Gateway
   # ═══════════════════════════════════════════════════════════════════════════
   ewm-gateway:
     build:
@@ -199,7 +148,7 @@ services:
       dockerfile: Dockerfile
     container_name: ewm-gateway
     ports:
-      - "${GATEWAY_PORT:-8000}:8000"
+      - "${GATEWAY_PORT:-8001}:8001"
     environment:
       - HLLSET_CORTEX_URL=http://hllset-cortex:9092
       - DEEPSEEK_OCR_URL=http://deepseek-ocr:9093
@@ -208,19 +157,17 @@ services:
       - IPFS_API_URL=http://ipfs:5001
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     depends_on:
-      hllset-cortex:
-        condition: service_healthy
       deepseek-ocr:
         condition: service_started
       medical-diagnostic:
-        condition: service_healthy
+        condition: service_started
       nlp-model:
         condition: service_started
     networks:
       - ewm-net
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -237,7 +184,7 @@ services:
     ports:
       - "${UI_PORT:-8080}:8080"
     environment:
-      - GATEWAY_URL=http://ewm-gateway:8000
+      - GATEWAY_URL=http://ewm-gateway:8001
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
       # Opt-in: mount the Docker socket so the UI can show host resource usage.
@@ -247,7 +194,7 @@ services:
       - ${DOCKER_SOCK_MOUNT:-/dev/null}:/var/run/docker.sock:ro
     depends_on:
       ewm-gateway:
-        condition: service_healthy
+        condition: service_started
     networks:
       - ewm-net
     restart: unless-stopped
@@ -272,8 +219,6 @@ networks:
 volumes:
   ipfs_data:
     name: ewm-ipfs-data
-  hllset_data:
-    name: ewm-hllset-data
   medical_data:
     name: ewm-medical-data
   hf_model_cache:

@@ -619,6 +619,6 @@ async def ipfs_get(cid: str):
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", 8000))
+    port = int(os.environ.get("PORT", 8001))
     logger.info(f"ewm-gateway starting on port {port}")
     uvicorn.run(app, host="0.0.0.0", port=port, log_level=LOG_LEVEL.lower())

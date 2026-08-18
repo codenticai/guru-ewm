@@ -77,6 +77,9 @@ DEEPSEEK_OCR_URL = os.environ.get("DEEPSEEK_OCR_URL", "http://deepseek-ocr:9093"
 # Seed/backup: knowledge-corpus snapshot stored in IPFS for restore-on-restart
 KB_SNAPSHOT_CID = os.environ.get("KB_SNAPSHOT_CID", "")
 KB_SNAPSHOT_FILE = os.environ.get("KB_SNAPSHOT_FILE", "/app/data/kb_snapshot.json")
+# Full self-contained copy of the ingested corpus (cards), used to restore at
+# startup even when the IPFS node is empty or unreachable.
+KB_LOCAL_BACKUP_FILE = os.environ.get("KB_LOCAL_BACKUP_FILE", "/app/data/kb_snapshot_cards.json")
 # CPU-only CNN knee-MRI classifier weights (trained via scripts/train_knee_cnn.py)
 KNEE_CNN_MODEL = os.environ.get("KNEE_CNN_MODEL", "/app/knee_cnn.pt")
 
@@ -385,8 +388,22 @@ class HllsetKnowledgeBase:
         The HLLSet lattice is populated via hllset-next for content-addressed
         storage. Token sets are also cached locally for exact, deterministic
         scoring (HLL cardinality is unstable for small knowledge cards).
+
+        If hllset-next is unreachable the lattice POSTs are skipped and only
+        the local token index is built — diagnosis still works.
         """
         client = await get_client()
+        try:
+            h = await client.get(f"{self.base_url}/api/v1/health")
+            h.raise_for_status()
+        except Exception as e:
+            for card in self.cards:
+                key = self._key(card["id"])
+                self.registry[key] = card
+                self.card_tokens[key] = set(hll_tokenize(card["text"]))
+            self.ingested = len(self.registry) == len(self.cards)
+            return {"cards": len(self.cards), "ingested": 0,
+                    "errors": [f"hllset-next unreachable: {e}"]}
 
         async def one(card: dict):
             key = self._key(card["id"])
@@ -514,8 +531,25 @@ def _load_snapshot_file() -> str:
         return KB_SNAPSHOT_CID
 
 
+def _save_local_backup(payload: dict) -> None:
+    try:
+        os.makedirs(os.path.dirname(KB_LOCAL_BACKUP_FILE), exist_ok=True)
+        with open(KB_LOCAL_BACKUP_FILE, "w") as f:
+            json.dump(payload, f, default=str)
+    except Exception as e:  # pragma: no cover
+        logger.warning(f"could not save local backup: {e}")
+
+
+def _load_local_backup_cards() -> list:
+    try:
+        with open(KB_LOCAL_BACKUP_FILE) as f:
+            return json.load(f).get("cards", [])
+    except Exception:
+        return []
+
+
 async def _snapshot_kb(kb: HllsetKnowledgeBase) -> str:
-    """Back up the knowledge corpus to IPFS as a durable seed snapshot."""
+    """Back up the knowledge corpus to IPFS + a local file as a durable seed."""
     global _last_snapshot_cid
     payload = {
         "type": "knowledge-snapshot",
@@ -524,6 +558,7 @@ async def _snapshot_kb(kb: HllsetKnowledgeBase) -> str:
         "cards": kb.cards,
         "created_at": datetime.utcnow().isoformat(),
     }
+    _save_local_backup(payload)
     cid = await _store_to_ipfs(payload)
     if cid:
         _last_snapshot_cid = cid
@@ -555,22 +590,23 @@ async def restore_knowledge_base():
                 except Exception as e:
                     logger.warning(f"snapshot parse failed: {e}")
         if not kb.cards:
+            cards = _load_local_backup_cards()
+            if cards:
+                kb.cards = cards
+                logger.info(f"restored {len(cards)} cards from local backup")
+        if not kb.cards:
             logger.warning("no seed corpus and no snapshot — knowledge base empty")
             return
 
-    for attempt in range(10):
-        result = await kb.ingest()
-        if result.get("ingested", 0) > 0:
-            await _snapshot_kb(kb)
-            logger.info(f"knowledge base seeded: {result['ingested']} cards")
-            return
+    result = await kb.ingest()
+    await _snapshot_kb(kb)
+    if result.get("ingested", 0) > 0:
+        logger.info(f"knowledge base seeded: {result['ingested']} cards")
+    else:
         logger.warning(
-            f"seed ingest attempt {attempt + 1}: hllset-next not ready "
+            "hllset-next unavailable — using local token index only "
             f"({len(result.get('errors', []))} errors)"
         )
-        await asyncio.sleep(3)
-
-    logger.error("could not seed knowledge base after 10 attempts")
 
 
 @app.post("/hllset/ingest")

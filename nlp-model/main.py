@@ -44,6 +44,9 @@ HLLSET_NEXT_URL = os.environ.get("HLLSET_NEXT_URL", "http://hllset-next:9090")
 IPFS_API_URL = os.environ.get("IPFS_API_URL", "http://ipfs:5001")
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 KB_SNAPSHOT_FILE = os.environ.get("KB_SNAPSHOT_FILE", "/app/data/nlp_snapshot.json")
+# Full self-contained copy of the ingested corpus (cards), used to restore at
+# startup even when the IPFS node is empty or unreachable.
+KB_LOCAL_BACKUP_FILE = os.environ.get("KB_LOCAL_BACKUP_FILE", "/app/data/nlp_snapshot_cards.json")
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO))
 logger = logging.getLogger("nlp-model")
@@ -520,8 +523,19 @@ class NlpKnowledgeBase:
             ) or 1.0
 
     async def _post_cards_to_lattice(self, cards: list, concurrency: int = 40) -> tuple:
-        """POST the given cards to hllset-next with bounded concurrency."""
+        """POST the given cards to hllset-next with bounded concurrency.
+
+        If hllset-next is unreachable the POSTs are skipped entirely — the
+        local keyword index still powers retrieval and the IPFS snapshot
+        provides durability, so the app runs in degraded (but fully
+        functional) mode without the lattice.
+        """
         client = await get_client()
+        try:
+            h = await client.get(f"{self.base_url}/api/v1/health")
+            h.raise_for_status()
+        except Exception as e:
+            return 0, [f"hllset-next unreachable: {e}"]
         sem = asyncio.Semaphore(concurrency)
 
         async def one(card: dict):
@@ -937,6 +951,23 @@ def _load_snapshot_file() -> str:
         return ""
 
 
+def _save_local_backup(payload: dict) -> None:
+    try:
+        os.makedirs(os.path.dirname(KB_LOCAL_BACKUP_FILE), exist_ok=True)
+        with open(KB_LOCAL_BACKUP_FILE, "w") as f:
+            json.dump(payload, f, default=str)
+    except Exception as e:
+        logger.warning(f"could not save local backup: {e}")
+
+
+def _load_local_backup_cards() -> list:
+    try:
+        with open(KB_LOCAL_BACKUP_FILE) as f:
+            return json.load(f).get("cards", [])
+    except Exception:
+        return []
+
+
 async def _snapshot_kb(kb: NlpKnowledgeBase) -> str:
     global _last_snapshot_cid
     payload = {
@@ -946,6 +977,9 @@ async def _snapshot_kb(kb: NlpKnowledgeBase) -> str:
         "cards": kb.cards,
         "created_at": datetime.utcnow().isoformat(),
     }
+    # Always write a self-contained local backup of the ingested corpus so
+    # startup can restore it even if the IPFS node is empty or unreachable.
+    _save_local_backup(payload)
     cid = await _store_to_ipfs(payload)
     if cid:
         _last_snapshot_cid = cid
@@ -1195,42 +1229,60 @@ async def restore_knowledge_base():
     if cid:
         _last_snapshot_cid = cid
     snapshot_cards = []
+    restore_source = ""
     if cid:
         raw = await _fetch_bytes_from_ipfs(cid)
         if raw:
             try:
                 snapshot_cards = json.loads(raw.decode("utf-8-sig")).get("cards", [])
+                restore_source = f"snapshot {cid}"
             except Exception as e:
                 logger.warning(f"snapshot parse failed: {e}")
+    if not snapshot_cards:
+        snapshot_cards = _load_local_backup_cards()
+        if snapshot_cards:
+            restore_source = "local backup"
 
     if snapshot_cards:
         if not kb.cards:
             kb.cards = snapshot_cards
-            logger.info(f"restored {len(snapshot_cards)} cards from snapshot {cid}")
+            logger.info(f"restored {len(snapshot_cards)} cards from {restore_source}")
         else:
             # merge back every card that isn't in the built-in seed (bulk + docs)
             extras = [c for c in snapshot_cards if c.get("id") not in builtin_ids]
             if extras:
                 kb.cards = kb.cards + extras
-                logger.info(f"restored {len(extras)} cards from snapshot {cid}")
+                logger.info(f"restored {len(extras)} cards from {restore_source}")
 
     if not kb.cards:
         logger.warning("no seed corpus and no snapshot — knowledge base empty")
         return
 
     if not snapshot_cards:
-        # first boot — POST the seed corpus to the lattice (idempotent, retried)
-        for attempt in range(10):
-            result = await kb.ingest()
-            if result.get("ingested", 0) > 0:
-                await _snapshot_kb(kb)
-                logger.info(f"nlp knowledge base seeded: {result['ingested']} cards")
-                return
-            logger.warning(f"seed ingest attempt {attempt + 1} failed: {result.get('errors', [])}")
-            await asyncio.sleep(3)
-        logger.error("could not seed nlp knowledge base after 10 attempts")
+        # first boot — seed the corpus. If hllset-next is unavailable the
+        # local index is still built and the corpus is persisted via the
+        # IPFS snapshot, so the app runs in degraded mode without the lattice.
+        result = await kb.ingest()
+        await _snapshot_kb(kb)
+        if result.get("ingested", 0) > 0:
+            logger.info(f"nlp knowledge base seeded: {result['ingested']} cards")
+        else:
+            logger.warning(
+                "hllset-next unavailable — using local index only "
+                f"({len(result.get('errors', []))} errors)"
+            )
+        return
     else:
-        # restart — the lattice is already persisted; just rebuild local indexes
+        # restart — the lattice is already persisted; just rebuild local indexes.
+        # Refresh the self-contained local backup from the restored cards so it
+        # is always current (and restorable) after every startup.
+        _save_local_backup({
+            "type": "nlp-knowledge-snapshot",
+            "engine": "nanolm",
+            "count": len(kb.cards),
+            "cards": kb.cards,
+            "created_at": datetime.utcnow().isoformat(),
+        })
         kb._rebuild_indexes()
         logger.info(f"nlp knowledge base ready: {len(kb.cards)} cards (indexes rebuilt)")
 

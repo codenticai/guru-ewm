@@ -21,7 +21,7 @@ A self-hosted, CPU-first platform that combines NLP question answering, OCR docu
                 └──────────────┬───────────────┘
                                ▼
                 ┌──────────────────────────────┐
-                │  ewm-gateway (FastAPI :8000) │
+                │  ewm-gateway (FastAPI :8001) │
                 └──┬──────┬──────┬──────┬──────┘
                    │      │      │      │
         ┌──────────▼┐ ┌───▼────┐ ┌▼──────────┐ ┌▼─────────────────┐
@@ -47,7 +47,7 @@ A self-hosted, CPU-first platform that combines NLP question answering, OCR docu
 | Service | Port | Technology | Purpose |
 |---|---|---|---|
 | `ewm-ui` | 8080 | NiceGUI | Chat UI (NLP / OCR / Diagnose modes) |
-| `ewm-gateway` | 8000 | FastAPI | Routing, service catalog, IPFS proxy |
+| `ewm-gateway` | 8001 | FastAPI | Routing, service catalog, IPFS proxy |
 | `nlp-model` | 9095 | FastAPI | NanoLM English Q&A + document ingestion |
 | `medical-diagnostic` | 9094 | FastAPI | Text lattice + knee-MRI + BiomedCLIP zero-shot |
 | `deepseek-ocr` | 9093 | FastAPI + Tesseract | OCR text extraction |
@@ -55,18 +55,72 @@ A self-hosted, CPU-first platform that combines NLP question answering, OCR docu
 | `hllset-cortex` | 9092 | Flask | HLLSet semantic compressor |
 | `ipfs` | 5001 / 8081 | Kubo | Content-addressed storage |
 
+## Roadmap
+
+The long-term direction is the **EWM (Emerging World Models) Rust workspace** — a self-modifying, content-addressed agent system built on `hllset-next`.
+
+### Phase 0 — Foundation
+
+Get EWM compiling against `hllset-next` and define the core types.
+
+- Create the EWM Rust workspace and wire `Cargo.toml` path dependencies to `hllset-next` crates.
+- Define `EmergenceTracker`, `OntologyView`, and `GateManager` in `ewm-core`.
+- Define the `BootstrapFamily` trait with an `NgramBootstrap` implementation.
+- Define `ControllerConfig` (the six-knob control surface) and the `OpponentProcessSignals` / `ControllerAction` enums.
+
+*Target: `cargo build` passes with unit tests for `EmergenceTracker`.*
+
+### Phase 1 — The Controller
+
+Wire the integration layer — the controller is the heart of EWM.
+
+- Implement `CrossLayerMatrix` — pairwise R-links across temporal layers.
+- Implement `NoetherController::step()` — the full decision loop.
+- Add temperature-controlled explore/exploit scheduling.
+- Track rank flux over a sliding window (ΔR, Δ²R) with Fisher-guided divergence analysis.
+- Compute the BSS opponent-process triad.
+- Test that the controller stabilizes under repeated identical input and detects phase transitions on novel input.
+
+### Phase 2 — Agent Network
+
+Implement `[UM]-Net` in Rust and validate it against the Python notebook results.
+
+- Implement the `Agent` trait and an `AgentDAG` with wave execution.
+- Merge outputs with CRDTs at confluence nodes and resolve cycles via temporal separation.
+- Add the fire threshold `θ_fire`.
+- Test two-agent pipelines, three-agent confluence, cycle loops, and controller-steered agent graphs.
+
+### Phase 3 — Memory & Lifecycle
+
+Add the holographic time-lens and system reproduction.
+
+- Implement `HolographicMemory` with a term-frequency stack and a `reconstruct(commit_t)` time-lens.
+- Implement `reproduce()` to spawn a child system and `check_health()` for rank-bubble detection.
+- Test round-trip reconstruction fidelity and parent → child knowledge transfer.
+
+### Phase 4 — Self-Ingestion
+
+Let the codebase observe itself.
+
+- Implement the `ingest_commit()` pipeline and auto-generated `llms.txt` from doc comments.
+- Add folder views (`v:<sha1>` = union of directory contents) and the `hot_files()` rank-flux query.
+- Test that EWM ingests its own source history and surfaces the highest-flux files.
+
+### Phase 5 — CLI & Evaluation
+
+Ship a runnable binary and evaluation notebooks.
+
+- Build the `ewm` CLI (`ewm run`, `ewm commit`, `ewm query`).
+- Produce evaluation notebooks for controller stabilization, agent-graph cycle memory, holographic reconstruction, self-ingestion, and a CAAL-LLM-style driving-rule demo.
+
 ## Quick start
 
 ### Prerequisites
 
 - Docker Engine + Docker Compose plugin (Linux) or Docker Desktop (Windows/macOS).
-- The `hllset-next` and `hllset-cortex` sources live outside this repository. Copy them into `./hllset-next` and `./hllset-cortex` (the compose defaults), or point the build contexts at your local copies via `.env`:
 
 ```bash
-cp .env.example .env
-# edit .env:
-#   HLLSET_NEXT_CONTEXT=/path/to/hllset-next
-#   HLLSET_CORTEX_CONTEXT=/path/to/hllset_cortex
+cp .env.example .env   # adjust ports/options if needed
 ```
 
 ### Build & run
@@ -77,7 +131,7 @@ docker compose up -d
 docker compose logs -f
 ```
 
-Open <http://localhost:8080>. The API gateway is at <http://localhost:8000>.
+Open <http://localhost:8080>. The API gateway is at <http://localhost:8001>.
 
 ### Optional: UI resource badge
 
@@ -90,12 +144,29 @@ DOCKER_SOCK_MOUNT=/var/run/docker.sock   # Linux
 
 then `docker compose up -d ewm-ui`.
 
+### Optional: HLLSet services (`hllset-next` / `hllset-cortex`)
+
+The application runs fully without them — NLP retrieval and clinical matching are computed locally in Python, OCR uses Tesseract, and durability comes from IPFS snapshots. They are only needed if you want the HLLSet lattice (content-addressed ingestion).
+
+To enable them (requires the sources, which are not in this repository):
+
+```bash
+# 1. Put the two projects next to this repo, or point .env at your copies:
+#    HLLSET_NEXT_CONTEXT=/path/to/hllset-next
+#    HLLSET_CORTEX_CONTEXT=/path/to/hllset-cortex
+# 2. Run with the override file:
+docker compose -f docker-compose.yml -f docker-compose.optional.yml up -d --build
+```
+
+> **Note on `hllset-cortex` vs DeepSeek-OCR:** `hllset-cortex` is this project's own HLLSet semantic-compressor service — it is **not** part of the [deepseek-ai/DeepSeek-OCR](https://github.com/deepseek-ai/DeepSeek-OCR) repository. That repo is the upstream OCR *model*. This project's `deepseek-ocr` service currently uses Tesseract (CPU-only), so the DeepSeek-OCR model is not required either.
+
 ## Configuration
 
 All settings live in `.env` (see `.env.example`): host ports, internal service URLs, IPFS profile, and optional GPU passthrough for OCR.
 
 ## Documentation
 
+- [Deployment guide — Ubuntu + Docker](DEPLOYMENT.md)
 - [Architecture & implementation plan](docs/ARCHITECTURE.md)
 - [NanoLM specification](docs/NANOLM_SPECIFICATION.md)
 - [NanoLM NLP model specification](docs/NANOLM_NLP_MODEL_SPECIFICATION.md)
