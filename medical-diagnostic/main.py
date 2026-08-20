@@ -80,7 +80,7 @@ KB_SNAPSHOT_FILE = os.environ.get("KB_SNAPSHOT_FILE", "/app/data/kb_snapshot.jso
 # Full self-contained copy of the ingested corpus (cards), used to restore at
 # startup even when the IPFS node is empty or unreachable.
 KB_LOCAL_BACKUP_FILE = os.environ.get("KB_LOCAL_BACKUP_FILE", "/app/data/kb_snapshot_cards.json")
-# CPU-only CNN knee-MRI classifier weights (trained via scripts/train_knee_cnn.py)
+# CPU-only CNN knee-MRI classifier weights (trained via train_knee_cnn.py)
 KNEE_CNN_MODEL = os.environ.get("KNEE_CNN_MODEL", "/app/knee_cnn.pt")
 
 logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO))

@@ -16,7 +16,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py .
+COPY main.py deepseek_model.py .
+COPY model/ model/
 
 HEALTHCHECK --interval=15s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:9093/health || exit 1

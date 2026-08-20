@@ -167,19 +167,8 @@ All settings live in `.env` (see `.env.example`): host ports, internal service U
 ## Documentation
 
 - [Deployment guide — Ubuntu + Docker](DEPLOYMENT.md)
-- [Architecture & implementation plan](docs/ARCHITECTURE.md)
-- [NanoLM specification](docs/NANOLM_SPECIFICATION.md)
-- [NanoLM NLP model specification](docs/NANOLM_NLP_MODEL_SPECIFICATION.md)
-
-## Testing
-
-```bash
-pip install -r tests/requirements-test.txt
-pytest tests/ -v                       # full suite (requires a running stack)
-pytest tests/test_nlp_quality.py -v    # NLP reply quality (needs stack up)
-pytest tests/test_keyword_query.py -v  # keyword non-fallback (needs stack up)
-pytest tests/test_ui_gui.py --base-url http://localhost:8080
-```
+- [Changelog](CHANGELOG.md)
+- [Third-party notices](THIRD_PARTY_NOTICES.md)
 
 ## Data & model sources
 
@@ -190,14 +179,24 @@ pytest tests/test_ui_gui.py --base-url http://localhost:8080
 | `knee_cnn.pt` | trained on synthetic MRI data in this repo | project license |
 | BiomedCLIP weights | downloaded at runtime from Hugging Face | subject to the model's HF license |
 
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for full third-party attribution.
+
 ## Disclaimer
 
 Clinical/diagnostic outputs are for research and demonstration only. They are not a substitute for professional medical advice, diagnosis, or treatment.
 
 ## License
 
-[MIT](LICENSE) © 2026 Guru-EWM contributors.
+[MIT](LICENSE) © 2026 Codentic AI.
 
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md). Report vulnerabilities privately per [SECURITY.md](SECURITY.md).
+
+## Support
+
+For questions, issues, or support requests, contact:
+
+- **Deependra Kumar**
+- Phone: [9845555760](tel:+919845555760)
+- Email: [deependar@codenticai.com](mailto:deependar@codenticai.com)

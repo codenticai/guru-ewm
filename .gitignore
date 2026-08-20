@@ -239,3 +239,10 @@ hf_model_cache/
 docs/
 tests/
 scripts/
+
+# Confidential / generated data (real invoice extraction output)
+output/
+invoice-extractor/
+
+# Derived data (regenerated from the NLP corpus via scripts/export_keywords.py)
+nlp_keywords.csv

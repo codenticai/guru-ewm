@@ -5,6 +5,22 @@ python-multipart>=0.0.9
 pypdf>=4.0
 Pillow>=10.0
 pytesseract>=0.3.10
-# Uncomment for GPU support:
-# torch>=2.4.0
-# transformers>=4.46.0
+# ── Optional: DeepSeek-OCR model (GPU only) ──────────────────────────────
+# The service OCRs with Tesseract on CPU by default. To run the real
+# DeepSeek-OCR model (deepseek-ai/DeepSeek-OCR), uncomment these AND switch
+# the Dockerfile base to a CUDA image + enable nvidia GPU in docker-compose.
+# Versions mirror the upstream deepseek-ai/DeepSeek-OCR requirements + README.
+# torch==2.6.0
+# torchvision==0.21.0
+# torchaudio==2.6.0
+# transformers==4.46.3
+# tokenizers==0.20.3
+# einops
+# easydict
+# addict
+# PyMuPDF
+# img2pdf
+# numpy
+# tqdm
+# flash-attn==2.7.3 --no-build-isolation
+# vllm>=0.8.5          # for the vLLM engine (DEEPSEEK_OCR_ENGINE=vllm)

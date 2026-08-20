@@ -79,7 +79,7 @@ ssh user@<server-ip> 'cd /srv && tar -xzf guru-ewm.tar.gz && rm guru-ewm.tar.gz'
 > (see [Optional services](#8-optional-hllset-services)).
 
 > **Offline deploy?** Also copy the backup folder (the saved image `.tar` and
-> volume `.tar.gz` files, e.g. from `D:\innovation\nanolm images`) to
+> volume `.tar.gz` files, e.g. from your local backup folder) to
 > `/srv/guru-ewm/backup` — then use Option B in
 > [Build & start](#5-build--start).
 
@@ -110,19 +110,12 @@ docker compose build
 docker compose up -d
 ```
 
-### Option B — offline (use the saved images + data volumes)
+### Option B — offline (saved images + data volumes)
 
-Copy the backup folder (produced by `scripts/backup.ps1`) to the server, e.g.
-`/srv/guru-ewm/backup`, then run:
-
-```bash
-BACKUP_DIR=/srv/guru-ewm/backup bash scripts/deploy-offline.sh
-```
-
-This loads the saved Docker images, restores the data volumes (IPFS content
-store, NLP/medical snapshots, and the BiomedCLIP model cache — **no
-re-ingesting**), builds only `ewm-ui` (its image was not saved), and starts
-the stack.
+Offline deployment uses maintainer-provided backup/restore tooling (not
+included in this repository). It loads the saved Docker images, restores the
+data volumes (IPFS content store, NLP/medical snapshots, and the BiomedCLIP
+model cache — **no re-ingesting**), builds only `ewm-ui`, and starts the stack.
 
 ### After either option
 

@@ -13,7 +13,7 @@ Training data: a labeled folder of grayscale images:
       ...
 
 or the built-in synthetic generators (knee_mri.generate_synthetic) via
-scripts/train_knee_cnn.py --synthetic.
+train_knee_cnn.py --synthetic.
 
 NOTE: trained on synthetic images this does NOT generalize to real MRI scans;
 it exists so that a CPU-only training path is ready for a real labeled dataset.

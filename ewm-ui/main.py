@@ -553,7 +553,7 @@ async def index():
                 query.on("keydown.up.prevent", recall_previous)
                 query.on("keydown.down.prevent", recall_next)
         ui.label("NanoLM is a platform where NLP, OCR, and any other model can be deployed.").classes("input-hint")
-        ui.label("© 2026 Guru-EWM contributors · MIT License").classes("copyright")
+        ui.label("© 2026 Codentic AI · MIT License").classes("copyright")
 
     render_welcome()
 

@@ -20,6 +20,7 @@ jobs:
         run: |
           docker compose build \
             deepseek-ocr \
+            invoice-extractor \
             medical-diagnostic \
             nlp-model \
             ewm-gateway \
