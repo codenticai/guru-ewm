@@ -198,5 +198,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT
 For questions, issues, or support requests, contact:
 
 - **Deependra Kumar**
-- Phone: [9845555760](tel:+919845555760)
+- Phone: [+919845555760](tel:+919845555760)
 - Email: [deependar@codenticai.com](mailto:deependar@codenticai.com)
