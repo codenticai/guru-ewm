@@ -31,7 +31,7 @@ Optional (sources live outside this repo; enable via `docker-compose.optional.ym
 - `docker-compose.yml` — core services; `docker-compose.optional.yml` — optional HLLSet services.
 - `.env.example` — all configuration (copy to `.env`).
 
-`invoice-extractor/`, `docs/`, `tests/`, `scripts/`, and `output/` are developer-local (gitignored — not part of the published repo).
+`docs/`, `tests/`, `scripts/`, and `output/` are developer-local (gitignored — not part of the published repo).
 
 ## Build & run
 
