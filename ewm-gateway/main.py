@@ -5,7 +5,6 @@ Routes requests to EWM backend services:
   - deepseek-ocr          (FastAPI :9093) — OCR text extraction
   - medical-diagnostic    (FastAPI :9094) — clinical diagnosis
   - nlp-model             (FastAPI :9095) — English NLP
-  - invoice-extractor     (FastAPI :9096) — invoice extraction
   - ipfs                  (Kubo :5001) — Content-addressed storage
 
 Endpoints:
@@ -13,7 +12,6 @@ Endpoints:
   GET  /health            — Aggregated health check
   GET  /services          — Registered service list
   POST /ocr/extract       — Extract text from an uploaded file
-  POST /invoice/extract   — Extract invoice fields from an uploaded invoice
   POST /ipfs/upload       — Upload to IPFS
   GET  /ipfs/{cid}        — Retrieve from IPFS
 """
@@ -23,7 +21,7 @@ import logging
 from datetime import datetime
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import JSONResponse
 import httpx
 
 # ── Config ──────────────────────────────────────────────────────────
@@ -31,7 +29,6 @@ HLLSET_CORTEX_URL = os.environ.get("HLLSET_CORTEX_URL", "http://hllset-cortex:90
 DEEPSEEK_OCR_URL = os.environ.get("DEEPSEEK_OCR_URL", "http://deepseek-ocr:9093")
 MEDICAL_DIAGNOSTIC_URL = os.environ.get("MEDICAL_DIAGNOSTIC_URL", "http://medical-diagnostic:9094")
 NLP_MODEL_URL = os.environ.get("NLP_MODEL_URL", "http://nlp-model:9095")
-INVOICE_EXTRACTOR_URL = os.environ.get("INVOICE_EXTRACTOR_URL", "http://invoice-extractor:9096")
 IPFS_API_URL = os.environ.get("IPFS_API_URL", "http://ipfs:5001")
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 
@@ -183,29 +180,6 @@ async def ocr_extract(file: UploadFile = File(...)):
         return JSONResponse(content=r.json(), status_code=r.status_code)
     except httpx.ConnectError:
         raise HTTPException(503, "deepseek-ocr service unreachable")
-
-
-@app.post("/invoice/extract")
-async def invoice_extract(file: UploadFile = File(...)):
-    """Upload an invoice (PDF/image) → OCR → populate both invoice templates."""
-    client = await get_client()
-    try:
-        files = {"file": (file.filename, await file.read(), file.content_type or "application/octet-stream")}
-        r = await client.post(f"{INVOICE_EXTRACTOR_URL}/invoice/extract", files=files)
-        return JSONResponse(content=r.json(), status_code=r.status_code)
-    except httpx.ConnectError:
-        raise HTTPException(503, "invoice-extractor service unreachable")
-
-
-@app.get("/invoice", response_class=HTMLResponse)
-async def invoice_ui():
-    """Serve the invoice upload UI (proxied from the invoice-extractor service)."""
-    client = await get_client()
-    try:
-        r = await client.get(f"{INVOICE_EXTRACTOR_URL}/")
-        return HTMLResponse(content=r.text, status_code=r.status_code)
-    except httpx.ConnectError:
-        raise HTTPException(503, "invoice-extractor service unreachable")
 
 
 # ═══════════════════════════════════════════════════════════════════════

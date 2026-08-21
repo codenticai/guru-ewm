@@ -242,6 +242,8 @@ scripts/
 
 # Confidential / generated data (real invoice extraction output)
 output/
+
+# Local-only experimental service (not shipped to GitHub)
 invoice-extractor/
 
 # Derived data (regenerated from the NLP corpus via scripts/export_keywords.py)

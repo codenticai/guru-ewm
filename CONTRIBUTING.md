@@ -27,7 +27,6 @@ Thanks for your interest in Guru-EWM.
 | NLP model | `nlp-model/` |
 | Medical diagnostic | `medical-diagnostic/` |
 | OCR | `deepseek-ocr/` |
-| Invoice extractor | `invoice-extractor/` |
 | Gateway | `ewm-gateway/` |
 | UI | `ewm-ui/` |
 

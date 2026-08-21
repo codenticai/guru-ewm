@@ -78,31 +78,6 @@ services:
       start_period: 60s
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # invoice-extractor — Dedicated invoice OCR + template-population service
-  # (isolated from the core app: this is a self-contained invoice requirement)
-  # ═══════════════════════════════════════════════════════════════════════════
-  invoice-extractor:
-    build:
-      context: ./invoice-extractor
-      dockerfile: Dockerfile
-    container_name: ewm-invoice-extractor
-    ports:
-      - "${INVOICE_EXTRACTOR_PORT:-9096}:9096"
-    environment:
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - DEEPSEEK_OCR_URL=http://deepseek-ocr:9093
-      - INVOICE_OCR_ENGINE=${INVOICE_OCR_ENGINE:-auto}
-    networks:
-      - ewm-net
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9096/health"]
-      interval: 15s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-
-  # ═══════════════════════════════════════════════════════════════════════════
   # medical-diagnostic — Clinical Diagnosis Service (EWM backend)
   # ═══════════════════════════════════════════════════════════════════════════
   medical-diagnostic:
@@ -180,7 +155,6 @@ services:
       - DEEPSEEK_OCR_URL=http://deepseek-ocr:9093
       - MEDICAL_DIAGNOSTIC_URL=http://medical-diagnostic:9094
       - NLP_MODEL_URL=http://nlp-model:9095
-      - INVOICE_EXTRACTOR_URL=http://invoice-extractor:9096
       - IPFS_API_URL=http://ipfs:5001
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     depends_on:
@@ -189,8 +163,6 @@ services:
       medical-diagnostic:
         condition: service_started
       nlp-model:
-        condition: service_started
-      invoice-extractor:
         condition: service_started
     networks:
       - ewm-net

@@ -14,7 +14,6 @@ First open-source release.
 - `nlp-model` — NanoLM English Q&A: IDF-weighted cosine retrieval, single-keyword rescue, union-of-occurrences replies with 15-per-page pagination, typo correction, clarification prompts, pronoun/context resolution, negation and elaboration handling, meta-question handling, persistent sessions, and bulk corpus ingestion.
 - `medical-diagnostic` — ECG / X-ray / CT / knee-MRI / lab text-report matching with numeric reference ranges, negation + domain filtering, and head-term scoring; BiomedCLIP zero-shot image classification; synthetic knee-MRI fingerprint classifier (CPU-only) plus an optional CPU CNN (`/classify/knee/deep`).
 - `deepseek-ocr` — Tesseract CPU OCR (full-page and ECG band modes), PDF text extraction, plain-text pass-through, and an optional DeepSeek-OCR GPU model path (`deepseek_model.py` + vendored model source).
-- `invoice-extractor` — dedicated PDF/image → template-populated invoice JSON with a browser UI and optional model-backed OCR.
 - `ewm-gateway` — central routing, aggregated health, service catalog, and IPFS proxy.
 - `ewm-ui` — NiceGUI chat with NLP / OCR / Diagnose modes, sample reports, light/dark themes, logo, and an optional live CPU/RAM header badge.
 - IPFS (Kubo) content-addressed snapshots with local JSON backup and startup restore.
@@ -30,6 +29,5 @@ First open-source release.
 - **2026-08-15** — Numeric-keyword cleanup, single-keyword non-fallback sweep, union-of-occurrences + pagination, and negation fixes.
 - **2026-08-16** — Open-source packaging: portable compose file, MIT license, community docs, CI, and the UI resource badge.
 - **2026-08-17** — IPFS local backup + startup restore.
-- **2026-08-19** — Invoice extraction, segregated into the `invoice-extractor` service with a browser UI.
 - **2026-08-20** — DeepSeek-OCR model integration (CPU fallback preserved), vendored DeepSeek-OCR source, and full test-suite validation.
 - **2026-08-21** — Open-source finalization: third-party notices, code owner, support contact, and legacy code removal.
